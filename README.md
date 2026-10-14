@@ -1,4 +1,4 @@
-# Note Basement 備忘錄
+# QuickNote 備忘錄
 
 用密碼保護的個人備忘錄單頁網站。備忘錄存在 Supabase 資料庫，全程只走一般的 HTTPS。
 

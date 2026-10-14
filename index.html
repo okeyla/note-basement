@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Note Basement 備忘錄</title>
+<title>QuickNote 備忘錄</title>
 <meta name="description" content="用密碼保護的個人備忘錄，可用清單或便利貼瀏覽。">
 <meta name="theme-color" content="#7048e8">
 <link rel="icon" href="icon.svg" type="image/svg+xml">
@@ -12,7 +12,7 @@
 <body>
 <header class="top">
   <div class="wrap">
-    <div class="brand"><span class="dot"></span>Note Basement <small>備忘錄</small></div>
+    <div class="brand"><span class="dot"></span>QuickNote <small>備忘錄</small></div>
     <div class="spacer"></div>
     <button class="btn ghost hidden" id="btnLock" title="清除這台電腦記住的密碼並回到輸入畫面">鎖定</button>
   </div>
@@ -85,8 +85,8 @@
   'use strict';
   // 後端（Supabase 專案）網址，和 QuickDrop 共用同一個專案
   const SUPABASE_URL = 'https://waedocvudiyxtlywtzqq.supabase.co';
-  const PW_KEY = 'notebasement.password';
-  const VIEW_KEY = 'notebasement.view';
+  const PW_KEY = 'quicknote.password';
+  const VIEW_KEY = 'quicknote.view';
   const PAPERS = ['#fff3a3', '#ffd8a8', '#ffc9de', '#d0ebff', '#c3fae8', '#e5dbff', '#d8f5a2'];
   const VIS_TEXT = { public: '公', private: '私' };
 
