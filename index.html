@@ -2,12 +2,25 @@
 <html lang="zh-Hant">
 <head>
 <meta charset="utf-8">
+<script>
+// 畫面繪製前先套用已存的明暗模式、主題色、字型，避免先閃一下預設樣式
+(function () {
+  var d = document.documentElement;
+  var ok = { theme: ['light', 'dark'], accent: ['indigo', 'teal', 'crimson', 'rose', 'amber', 'violet', 'ink'], font: ['huninn', 'iansui'] };
+  for (var k in ok) {
+    try { var v = localStorage.getItem('qn-' + k); if (ok[k].indexOf(v) >= 0) d.setAttribute('data-' + k, v); } catch (e) {}
+  }
+})();
+</script>
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>QuickNote 備忘錄</title>
 <meta name="description" content="用密碼保護的個人備忘錄，可用清單或便利貼瀏覽。">
-<meta name="theme-color" content="#7048e8">
+<meta name="theme-color" content="#1f6b52">
 <link rel="icon" href="icon.svg" type="image/svg+xml">
-<link rel="stylesheet" href="style.css?v=1">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700;900&family=Huninn&family=Iansui&display=swap">
+<link rel="stylesheet" href="style.css?v=2">
 </head>
 <body>
 <header class="top">
@@ -80,13 +93,90 @@
 
 <div class="toast" id="toast"></div>
 
+<!-- 右下角的配色、字型切換 -->
+<div class="fabs">
+  <div class="fab-wrap">
+    <div class="panel hidden" id="panelTheme" role="dialog" aria-label="配色">
+      <div class="panel-title">明暗模式</div>
+      <div class="opts" data-pref="theme">
+        <button data-v="auto"><i class="sw" style="background:linear-gradient(135deg,#f5f1e8 50%,#16181a 50%)"></i>預設（跟隨電腦）</button>
+        <button data-v="light"><i class="sw" style="background:#f5f1e8"></i>淺色</button>
+        <button data-v="dark"><i class="sw" style="background:#16181a"></i>深色</button>
+      </div>
+      <div class="panel-title">主題色</div>
+      <div class="opts two" data-pref="accent">
+        <button data-v="jade"><i class="sw" style="background:#1f6b52"></i>翡翠綠</button>
+        <button data-v="indigo"><i class="sw" style="background:#2b55a8"></i>靛青藍</button>
+        <button data-v="teal"><i class="sw" style="background:#0f7285"></i>湖水藍</button>
+        <button data-v="crimson"><i class="sw" style="background:#b33a2e"></i>朱砂紅</button>
+        <button data-v="rose"><i class="sw" style="background:#a8356a"></i>胭脂粉</button>
+        <button data-v="amber"><i class="sw" style="background:#9a5b00"></i>琥珀橙</button>
+        <button data-v="violet"><i class="sw" style="background:#6d44a8"></i>紫藤紫</button>
+        <button data-v="ink"><i class="sw" style="background:#3d4650"></i>墨石灰</button>
+      </div>
+    </div>
+    <button class="fab" id="fabTheme" data-panel="panelTheme" aria-expanded="false"><span class="ico">🎨</span><span>配色</span></button>
+  </div>
+  <div class="fab-wrap">
+    <div class="panel hidden" id="panelFont" role="dialog" aria-label="字型">
+      <div class="panel-title">字型</div>
+      <div class="opts" data-pref="font">
+        <button data-v="noto" style="font-family:'Noto Sans TC';font-weight:700">思源黑體粗體<small>Noto Sans TC</small></button>
+        <button data-v="huninn" style="font-family:Huninn;font-weight:400">粉圓<small>Huninn</small></button>
+        <button data-v="iansui" style="font-family:Iansui;font-weight:400">芫荽<small>Iansui</small></button>
+      </div>
+    </div>
+    <button class="fab" id="fabFont" data-panel="panelFont" aria-expanded="false"><span class="ico">Aa</span><span>字型</span></button>
+  </div>
+</div>
+
+<script>
+// 配色、字型切換：選擇存在 localStorage（qn-theme、qn-accent、qn-font），預設值就移除屬性
+(() => {
+  'use strict';
+  const DEFAULTS = { theme: 'auto', accent: 'jade', font: 'noto' };
+  const root = document.documentElement;
+  const current = k => root.getAttribute('data-' + k) || DEFAULTS[k];
+
+  function mark() {
+    for (const group of document.querySelectorAll('.opts[data-pref]')) {
+      const value = current(group.dataset.pref);
+      for (const b of group.querySelectorAll('button')) b.setAttribute('aria-pressed', b.dataset.v === value);
+    }
+  }
+  function setPref(k, v) {
+    if (v === DEFAULTS[k]) root.removeAttribute('data-' + k); else root.setAttribute('data-' + k, v);
+    try { localStorage.setItem('qn-' + k, v); } catch {}
+    mark();
+  }
+  function closeAll(except) {
+    for (const fab of document.querySelectorAll('.fab')) {
+      const open = fab.dataset.panel === except;
+      document.getElementById(fab.dataset.panel).classList.toggle('hidden', !open);
+      fab.setAttribute('aria-expanded', open);
+    }
+  }
+
+  for (const fab of document.querySelectorAll('.fab')) {
+    fab.onclick = () => closeAll(fab.getAttribute('aria-expanded') === 'true' ? null : fab.dataset.panel);
+  }
+  for (const group of document.querySelectorAll('.opts[data-pref]')) {
+    group.onclick = e => { const b = e.target.closest('button'); if (b) setPref(group.dataset.pref, b.dataset.v); };
+  }
+  // 點面板以外的地方或按 Esc 就關閉
+  document.addEventListener('click', e => { if (!e.target.closest('.fab-wrap')) closeAll(null); });
+  document.addEventListener('keydown', e => { if (e.key === 'Escape') closeAll(null); });
+  mark();
+})();
+</script>
+
 <script>
 (() => {
   'use strict';
   // 後端（Supabase 專案）網址，和 QuickDrop 共用同一個專案
   const SUPABASE_URL = 'https://waedocvudiyxtlywtzqq.supabase.co';
-  const PW_KEY = 'quicknote.password';
-  const VIEW_KEY = 'quicknote.view';
+  const PW_KEY = 'qn-password';
+  const VIEW_KEY = 'qn-view';
   const PAPERS = ['#fff3a3', '#ffd8a8', '#ffc9de', '#d0ebff', '#c3fae8', '#e5dbff', '#d8f5a2'];
   const VIS_TEXT = { public: '公', private: '私' };
 
