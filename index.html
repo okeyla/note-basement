@@ -1,0 +1,372 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Note Basement 備忘錄</title>
+<meta name="description" content="用密碼保護的個人備忘錄，可用清單或便利貼瀏覽。">
+<meta name="theme-color" content="#7048e8">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="style.css?v=1">
+</head>
+<body>
+<header class="top">
+  <div class="wrap">
+    <div class="brand"><span class="dot"></span>Note Basement <small>備忘錄</small></div>
+    <div class="spacer"></div>
+    <button class="btn ghost hidden" id="btnLock" title="清除這台電腦記住的密碼並回到輸入畫面">鎖定</button>
+  </div>
+</header>
+
+<main class="wrap">
+  <div id="configBanner" class="banner hidden">尚未設定後端網址（index.html 裡的 <code>SUPABASE_URL</code>）。</div>
+
+  <section class="card hidden" id="unlockCard">
+    <h2>輸入密碼</h2>
+    <div class="row">
+      <input type="password" id="password" class="grow" placeholder="備忘錄密碼" autocomplete="off">
+      <label class="row" style="gap:6px"><input type="checkbox" id="optRemember" style="width:18px;height:18px"> 在這台電腦記住</label>
+      <button class="btn primary" id="btnUnlock">解鎖</button>
+    </div>
+    <p class="hint" style="margin:8px 0 0">公用電腦請不要勾「記住」。</p>
+  </section>
+
+  <section id="notesView" class="hidden">
+    <div class="toolbar">
+      <div class="row">
+        <button class="btn primary" id="btnNew">＋ 新增</button>
+        <input type="search" id="search" class="grow" placeholder="搜尋標題、內容、類別" autocomplete="off">
+        <div class="seg" id="visFilter" role="group" aria-label="公私篩選">
+          <button data-v="all">全部</button><button data-v="public">公</button><button data-v="private">私</button>
+        </div>
+        <div class="seg" id="viewToggle" role="group" aria-label="瀏覽方式">
+          <button data-v="board">便利貼</button><button data-v="list">清單</button>
+        </div>
+        <button class="btn ghost" id="btnRefresh" title="重新整理">↻</button>
+      </div>
+      <div class="chips" id="chips" role="group" aria-label="類別篩選"></div>
+    </div>
+    <div class="board hidden" id="board"></div>
+    <div class="list hidden" id="list"></div>
+    <div class="empty hidden" id="empty"></div>
+  </section>
+</main>
+
+<dialog id="editor" aria-labelledby="editorHeading">
+  <h3 id="editorHeading"></h3>
+  <label class="field"><span>標題</span><input type="text" id="fTitle" maxlength="200" autocomplete="off"></label>
+  <label class="field"><span>內容</span><textarea id="fContent"></textarea></label>
+  <div class="row" style="align-items:flex-end;margin-bottom:16px">
+    <div>
+      <span class="field-label">公 / 私</span>
+      <div class="seg" id="fVis" role="group" aria-label="公或私">
+        <button type="button" data-v="private">私</button><button type="button" data-v="public">公</button>
+      </div>
+    </div>
+    <label class="grow">
+      <span class="field-label">類別</span>
+      <input type="text" id="fCategory" list="catList" maxlength="30" autocomplete="off" placeholder="例如：工作、購物、想法">
+    </label>
+    <button type="button" class="btn" id="btnClassify" title="讓 AI 依標題和內容建議類別">✨ AI 分類</button>
+  </div>
+  <datalist id="catList"></datalist>
+  <div class="foot">
+    <button type="button" class="btn danger hidden" id="btnDelete">刪除</button>
+    <div class="spacer"></div>
+    <button type="button" class="btn" id="btnCancel">取消</button>
+    <button type="button" class="btn primary" id="btnSave">儲存</button>
+  </div>
+</dialog>
+
+<div class="toast" id="toast"></div>
+
+<script>
+(() => {
+  'use strict';
+  // 後端（Supabase 專案）網址，和 QuickDrop 共用同一個專案
+  const SUPABASE_URL = 'https://waedocvudiyxtlywtzqq.supabase.co';
+  const PW_KEY = 'notebasement.password';
+  const VIEW_KEY = 'notebasement.view';
+  const PAPERS = ['#fff3a3', '#ffd8a8', '#ffc9de', '#d0ebff', '#c3fae8', '#e5dbff', '#d8f5a2'];
+  const VIS_TEXT = { public: '公', private: '私' };
+
+  const $ = s => document.querySelector(s);
+
+  let toastTimer;
+  function toast(msg, isErr) {
+    const t = $('#toast');
+    t.textContent = msg;
+    t.className = 'toast show' + (isErr ? ' err' : '');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => t.className = 'toast', isErr ? 5000 : 2500);
+  }
+  function fmtTime(iso) {
+    const d = new Date(iso);
+    const pad = n => String(n).padStart(2, '0');
+    const year = d.getFullYear() === new Date().getFullYear() ? '' : d.getFullYear() + '/';
+    return `${year}${d.getMonth() + 1}/${d.getDate()} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  }
+  function escapeHtml(s) {
+    return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  }
+  function hash(s) {
+    let h = 0;
+    for (const c of s) h = (h * 31 + c.codePointAt(0)) >>> 0;
+    return h;
+  }
+  function setSeg(el, value) {
+    for (const b of el.querySelectorAll('button')) b.setAttribute('aria-pressed', b.dataset.v === value);
+  }
+
+  async function api(action, payload) {
+    let res;
+    try {
+      res = await fetch(SUPABASE_URL + '/functions/v1/notes', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action, ...payload }),
+      });
+    } catch { throw new Error('連不上伺服器，請檢查網路'); }
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || data.message || `伺服器錯誤（${res.status}）`);
+    return data;
+  }
+
+  if (!SUPABASE_URL) $('#configBanner').classList.remove('hidden');
+  else unlock();
+
+  // ================= 解鎖 =================
+  function unlock() {
+    $('#unlockCard').classList.remove('hidden');
+    let busy = false;
+
+    async function open() {
+      const password = $('#password').value;
+      if (busy) return;
+      if (!password) { toast('請輸入密碼', true); return; }
+      busy = true;
+      $('#btnUnlock').disabled = true;
+      try {
+        const first = await api('list', { password });
+        try {
+          if ($('#optRemember').checked) localStorage.setItem(PW_KEY, password);
+          else localStorage.removeItem(PW_KEY);
+        } catch {}
+        $('#unlockCard').classList.add('hidden');
+        $('#btnLock').classList.remove('hidden');
+        board(password, first.notes);
+      } catch (e) {
+        toast(e.message, true);
+      } finally {
+        busy = false;
+        $('#btnUnlock').disabled = false;
+      }
+    }
+
+    $('#btnUnlock').onclick = open;
+    $('#password').addEventListener('keydown', e => { if (e.key === 'Enter') open(); });
+    $('#btnLock').onclick = () => {
+      try { localStorage.removeItem(PW_KEY); } catch {}
+      location.reload();
+    };
+    try {
+      const saved = localStorage.getItem(PW_KEY);
+      if (saved) { $('#password').value = saved; $('#optRemember').checked = true; open(); }
+    } catch {}
+  }
+
+  // ================= 備忘錄 =================
+  function board(password, notes) {
+    $('#notesView').classList.remove('hidden');
+    let view = 'board';
+    try { if (localStorage.getItem(VIEW_KEY) === 'list') view = 'list'; } catch {}
+    let vis = 'all';
+    let cat = null;       // null：全部類別；''：未分類
+    let query = '';
+
+    const catName = c => c || '未分類';
+
+    function visible() {
+      const q = query.trim().toLowerCase();
+      return notes.filter(n =>
+        (vis === 'all' || n.visibility === vis) &&
+        (cat === null || n.category === cat) &&
+        (!q || [n.title, n.content, n.category].some(t => t.toLowerCase().includes(q))));
+    }
+
+    function renderChips() {
+      const counts = new Map();
+      for (const n of notes) counts.set(n.category, (counts.get(n.category) || 0) + 1);
+      if (cat !== null && !counts.has(cat)) cat = null;
+      // 有名字的類別依筆數排序，未分類放最後
+      const cats = [...counts.keys()].sort((a, b) => !a - !b || counts.get(b) - counts.get(a) || a.localeCompare(b));
+      const chip = (value, label, count) =>
+        `<button class="chip" ${value === null ? 'data-all' : `data-cat="${escapeHtml(value)}"`} aria-pressed="${cat === value}">${escapeHtml(label)}<small>${count}</small></button>`;
+      $('#chips').innerHTML = chip(null, '全部類別', notes.length) + cats.map(c => chip(c, catName(c), counts.get(c))).join('');
+      $('#catList').innerHTML = cats.filter(Boolean).map(c => `<option value="${escapeHtml(c)}">`).join('');
+    }
+
+    // 便利貼底色：未分類固定用第一色，其餘類別依最早建立的順序輪流配色，相鄰類別不會撞色
+    function paperOf() {
+      const first = new Map();
+      for (const n of notes) {
+        if (n.category && !(first.get(n.category) <= n.created_at)) first.set(n.category, n.created_at);
+      }
+      const order = [...first.keys()].sort((a, b) => first.get(a).localeCompare(first.get(b)) || a.localeCompare(b));
+      return c => PAPERS[c ? 1 + order.indexOf(c) % (PAPERS.length - 1) : 0];
+    }
+
+    const meta = n =>
+      `<div class="meta"><span class="tag ${n.visibility}">${VIS_TEXT[n.visibility]}</span><span class="tag">${escapeHtml(catName(n.category))}</span><span>${fmtTime(n.updated_at)}</span></div>`;
+
+    function render() {
+      renderChips();
+      setSeg($('#visFilter'), vis);
+      setSeg($('#viewToggle'), view);
+      const shown = visible();
+      $('#board').classList.toggle('hidden', view !== 'board' || !shown.length);
+      $('#list').classList.toggle('hidden', view !== 'list' || !shown.length);
+      $('#empty').classList.toggle('hidden', !!shown.length);
+      $('#empty').textContent = notes.length ? '沒有符合條件的備忘錄。' : '還沒有備忘錄，按「＋ 新增」寫第一則。';
+      if (view === 'board') {
+        const paper = paperOf();
+        $('#board').innerHTML = shown.map(n => {
+          const tilt = (hash(n.id) % 7 - 3) * 0.5;
+          return `<article class="sticky" tabindex="0" data-id="${escapeHtml(n.id)}" style="--paper:${paper(n.category)};--tilt:${tilt}deg">
+            ${n.title ? `<div class="title">${escapeHtml(n.title)}</div>` : ''}
+            <div class="text">${escapeHtml(n.content)}</div>
+            ${meta(n)}
+          </article>`;
+        }).join('');
+      } else {
+        $('#list').innerHTML = shown.map(n => `<div class="item" tabindex="0" data-id="${escapeHtml(n.id)}">
+          <div class="body">
+            <div class="title">${escapeHtml(n.title || '（無標題）')}</div>
+            ${n.content ? `<div class="snippet">${escapeHtml(n.content)}</div>` : ''}
+            ${meta(n)}
+          </div>
+          <div class="actions">
+            <button class="btn ghost small" data-edit>編輯</button>
+            <button class="btn ghost small danger" data-del>刪除</button>
+          </div>
+        </div>`).join('');
+      }
+    }
+
+    async function reload() {
+      $('#btnRefresh').disabled = true;
+      try { notes = (await api('list', { password })).notes; render(); }
+      catch (e) { toast(e.message, true); }
+      $('#btnRefresh').disabled = false;
+    }
+
+    async function remove(note) {
+      if (!confirm(`確定刪除「${note.title || '（無標題）'}」？刪除後無法復原。`)) return false;
+      try {
+        await api('remove', { password, id: note.id });
+        notes = notes.filter(n => n.id !== note.id);
+        render();
+        toast('已刪除');
+        return true;
+      } catch (e) { toast(e.message, true); return false; }
+    }
+
+    // ---------- 編輯視窗 ----------
+    const dlg = $('#editor');
+    let editing = null;   // 修改中的備忘錄；新增時為 null
+    let original = '';
+    let fVis = 'private';
+    let saving = false;
+
+    const form = () => ({ title: $('#fTitle').value, content: $('#fContent').value, category: $('#fCategory').value, visibility: fVis });
+    const setVis = v => { fVis = v; setSeg($('#fVis'), v); };
+
+    function openEditor(note) {
+      editing = note || null;
+      $('#editorHeading').textContent = note ? '修改備忘錄' : '新增備忘錄';
+      $('#fTitle').value = note?.title ?? '';
+      $('#fContent').value = note?.content ?? '';
+      // 新增時預設帶入目前篩選中的類別與公私
+      $('#fCategory').value = note ? note.category : cat || '';
+      setVis(note ? note.visibility : vis === 'public' ? 'public' : 'private');
+      $('#btnDelete').classList.toggle('hidden', !note);
+      original = JSON.stringify(form());
+      dlg.showModal();
+      $(note ? '#fContent' : '#fTitle').focus();
+    }
+    function closeEditor(force) {
+      if (saving) return;
+      if (!force && JSON.stringify(form()) !== original && !confirm('尚未儲存，確定放棄修改？')) return;
+      dlg.close();
+    }
+
+    async function save() {
+      if (saving) return;
+      const data = form();
+      if (!data.title.trim() && !data.content.trim()) { toast('標題和內容至少要填一項', true); return; }
+      saving = true;
+      $('#btnSave').disabled = true;
+      try {
+        const { note } = await api('save', { password, id: editing?.id, ...data });
+        notes = [note, ...notes.filter(n => n.id !== note.id)];
+        saving = false;
+        closeEditor(true);
+        render();
+        toast(editing ? '已儲存' : '已新增');
+      } catch (e) { toast(e.message, true); }
+      saving = false;
+      $('#btnSave').disabled = false;
+    }
+
+    async function classify() {
+      const { title, content } = form();
+      if (!title.trim() && !content.trim()) { toast('先寫點標題或內容，AI 才能分類', true); return; }
+      $('#btnClassify').disabled = true;
+      try {
+        const { category } = await api('classify', { password, title, content });
+        $('#fCategory').value = category;
+        toast(`AI 建議類別：${category}`);
+      } catch (e) { toast(e.message, true); }
+      $('#btnClassify').disabled = false;
+    }
+
+    // ---------- 事件 ----------
+    $('#btnNew').onclick = () => openEditor();
+    $('#btnRefresh').onclick = reload;
+    $('#search').oninput = e => { query = e.target.value; render(); };
+    $('#visFilter').onclick = e => { const b = e.target.closest('button'); if (b) { vis = b.dataset.v; render(); } };
+    $('#viewToggle').onclick = e => {
+      const b = e.target.closest('button');
+      if (!b) return;
+      view = b.dataset.v;
+      try { localStorage.setItem(VIEW_KEY, view); } catch {}
+      render();
+    };
+    $('#chips').onclick = e => {
+      const b = e.target.closest('.chip');
+      if (b) { cat = b.dataset.cat ?? null; render(); }
+    };
+    for (const el of [$('#board'), $('#list')]) {
+      const pick = e => notes.find(n => n.id === e.target.closest('[data-id]')?.dataset.id);
+      el.addEventListener('click', e => {
+        const note = pick(e);
+        if (!note) return;
+        if (e.target.closest('[data-del]')) remove(note); else openEditor(note);
+      });
+      el.addEventListener('keydown', e => {
+        if (e.key === 'Enter' && e.target.matches('[data-id]')) openEditor(pick(e));
+      });
+    }
+
+    $('#fVis').onclick = e => { const b = e.target.closest('button'); if (b) setVis(b.dataset.v); };
+    $('#btnSave').onclick = save;
+    $('#btnCancel').onclick = () => closeEditor();
+    $('#btnClassify').onclick = classify;
+    $('#btnDelete').onclick = async () => { if (await remove(editing)) closeEditor(true); };
+    dlg.addEventListener('cancel', e => { e.preventDefault(); closeEditor(); });
+    dlg.addEventListener('keydown', e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) save(); });
+
+    render();
+  }
+})();
+</script>
+</body>
+</html>
